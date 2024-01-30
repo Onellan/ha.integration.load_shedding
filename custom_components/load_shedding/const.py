@@ -5,9 +5,9 @@ from typing import Final
 
 API: Final = "API"
 ATTRIBUTION: Final = "Data provided by {provider}"
-DOMAIN: Final = "load_shedding"
+DOMAIN: Final = "load_shedding2"
 MAX_FORECAST_DAYS: Final = 7
-NAME: Final = "Load Shedding"
+NAME: Final = "Load Shedding2"
 MANUFACTURER: Final = "@wernerhp"
 VERSION: Final = "1.1.0"
 DEFAULT_SCAN_INTERVAL: Final = 60
