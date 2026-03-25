@@ -1,29 +1,26 @@
 """Support for the LoadShedding service."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+
+from load_shedding.providers import Area, Stage
 
 from homeassistant.components.sensor import RestoreSensor, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_ATTRIBUTION,
-    STATE_ON,
-    STATE_OFF,
-)
+from homeassistant.const import ATTR_ATTRIBUTION, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from load_shedding.providers import Area, Stage
 from . import LoadSheddingDevice
 from .const import (
     ATTR_AREA,
+    ATTR_AREA_ID,
     ATTR_END_IN,
     ATTR_END_TIME,
     ATTR_FORECAST,
@@ -122,6 +119,7 @@ class LoadSheddingStageSensorEntity(
 
     @property
     def name(self) -> str | None:
+        """Return the stage sensor name."""
         name = self.data.get("name", "Unknown")
         return f"{name} Stage"
 
@@ -135,9 +133,7 @@ class LoadSheddingStageSensorEntity(
         if not planned:
             return Stage.NO_LOAD_SHEDDING
 
-        stage = planned[0].get(ATTR_STAGE, Stage.UNKNOWN)
-        if stage in [Stage.UNKNOWN]:
-            return self._attr_native_value
+        stage = planned[0].get(ATTR_STAGE, Stage.NO_LOAD_SHEDDING)
 
         self._attr_native_value = cast(StateType, stage)
         return self._attr_native_value
@@ -152,13 +148,10 @@ class LoadSheddingStageSensorEntity(
         if not self.data:
             return self._attr_extra_state_attributes
 
-        # planned = self.data.get(ATTR_PLANNED, [])
         if not self.data:
             return self._attr_extra_state_attributes
 
-        now = datetime.now(timezone.utc)
-        # data = get_sensor_attrs(planned, planned[0].get(ATTR_STAGE, Stage.UNKNOWN))
-        # data[ATTR_PLANNED] = []
+        now = datetime.now(UTC)
         data = dict(self._attr_extra_state_attributes)
         if events := self.data.get(ATTR_PLANNED, []):
             data[ATTR_PLANNED] = []
@@ -180,7 +173,7 @@ class LoadSheddingStageSensorEntity(
         planned = []
         if ATTR_PLANNED in data:
             planned = data[ATTR_PLANNED]
-            cur_stage = planned[0].get(ATTR_STAGE, Stage.UNKNOWN)
+            cur_stage = planned[0].get(ATTR_STAGE, Stage.NO_LOAD_SHEDDING)
 
         attrs = get_sensor_attrs(planned, cur_stage)
         attrs[ATTR_PLANNED] = planned
@@ -195,6 +188,8 @@ class LoadSheddingStageSensorEntity(
         """Handle updated data from the coordinator."""
         if data := self.coordinator.data:
             self.data = data.get(self.idx)
+            # Explicitly get the native value to force state update
+            self._attr_native_value = self.native_value
             self.async_write_ha_state()
 
 
@@ -202,8 +197,6 @@ class LoadSheddingAreaSensorEntity(
     LoadSheddingDevice, CoordinatorEntity, RestoreSensor
 ):
     """Define a LoadShedding Area sensor entity."""
-
-    coordinator: CoordinatorEntity
 
     def __init__(self, coordinator: CoordinatorEntity, area: Area) -> None:
         """Initialize."""
@@ -230,6 +223,7 @@ class LoadSheddingAreaSensorEntity(
 
     @property
     def name(self) -> str | None:
+        """Return the area sensor name."""
         return self.area.name
 
     @property
@@ -243,7 +237,7 @@ class LoadSheddingAreaSensorEntity(
         if not events:
             return STATE_OFF
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for event in events:
             if ATTR_END_TIME in event and event.get(ATTR_END_TIME) < now:
@@ -272,7 +266,7 @@ class LoadSheddingAreaSensorEntity(
         if not self.data:
             return self._attr_extra_state_attributes
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = dict(self._attr_extra_state_attributes)
         if events := self.data.get(ATTR_FORECAST, []):
             data[ATTR_FORECAST] = []
@@ -293,6 +287,7 @@ class LoadSheddingAreaSensorEntity(
             forecast = data[ATTR_FORECAST]
 
         attrs = get_sensor_attrs(forecast)
+        attrs[ATTR_AREA_ID] = self.area.id
         attrs[ATTR_FORECAST] = forecast
         attrs[ATTR_LAST_UPDATE] = self.coordinator.last_update
         attrs = clean(attrs)
@@ -305,6 +300,8 @@ class LoadSheddingAreaSensorEntity(
         """Handle updated data from the coordinator."""
         if data := self.coordinator.data:
             self.data = data.get(self.area.id)
+            # Explicitly get the native value to force state update
+            self._attr_native_value = self.native_value
             self.async_write_ha_state()
 
 
@@ -314,7 +311,7 @@ class LoadSheddingQuotaSensorEntity(
     """Define a LoadShedding Quota entity."""
 
     def __init__(self, coordinator: CoordinatorEntity) -> None:
-        """Initialize."""
+        """Initialize the quota sensor."""
         super().__init__(coordinator)
         self.data = self.coordinator.data
 
@@ -330,6 +327,7 @@ class LoadSheddingQuotaSensorEntity(
 
     @property
     def name(self) -> str | None:
+        """Return the quota sensor name."""
         return "SePush API Quota"
 
     @property
@@ -363,32 +361,35 @@ class LoadSheddingQuotaSensorEntity(
         """Handle updated data from the coordinator."""
         if data := self.coordinator.data:
             self.data = data
+            # Explicitly get the native value to force state update
+            self._attr_native_value = self.native_value
             self.async_write_ha_state()
 
 
 def stage_forecast_to_data(stage_forecast: list) -> list:
-    """Convert stage forecast to serializable data"""
+    """Convert stage forecast to serializable data."""
     data = []
     for forecast in stage_forecast:
-        for schedule in forecast.get(ATTR_SCHEDULE, []):
-            data.append(
-                {
-                    ATTR_STAGE: forecast.get(ATTR_STAGE).value,
-                    ATTR_START_TIME: schedule[0].isoformat(),
-                    ATTR_END_TIME: schedule[1].isoformat(),
-                }
-            )
+        transformed_list = [
+            {
+                ATTR_STAGE: forecast.get(ATTR_STAGE).value,
+                ATTR_START_TIME: schedule[0].isoformat(),
+                ATTR_END_TIME: schedule[1].isoformat(),
+            }
+            for schedule in forecast.get(ATTR_SCHEDULE, [])
+        ]
+        data.extend(transformed_list)
     return data
 
 
 def get_sensor_attrs(forecast: list, stage: Stage = Stage.NO_LOAD_SHEDDING) -> dict:
-    """Get sensor attributes for the given forecast and stage"""
+    """Get sensor attributes for the given forecast and stage."""
     if not forecast:
         return {
             ATTR_STAGE: stage.value,
         }
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     data = dict(DEFAULT_DATA)
     data[ATTR_STAGE] = stage.value
 
@@ -407,7 +408,10 @@ def get_sensor_attrs(forecast: list, stage: Stage = Stage.NO_LOAD_SHEDDING) -> d
             nxt = forecast[1]
 
     if cur:
-        data[ATTR_STAGE] = cur.get(ATTR_STAGE).value
+        try:
+            data[ATTR_STAGE] = cur.get(ATTR_STAGE).value
+        except AttributeError:
+            data[ATTR_STAGE] = Stage.NO_LOAD_SHEDDING.value
         data[ATTR_START_TIME] = cur.get(ATTR_START_TIME).isoformat()
         if ATTR_END_TIME in cur:
             data[ATTR_END_TIME] = cur.get(ATTR_END_TIME).isoformat()
@@ -419,7 +423,11 @@ def get_sensor_attrs(forecast: list, stage: Stage = Stage.NO_LOAD_SHEDDING) -> d
             data[ATTR_END_IN] = ends_in
 
     if nxt:
-        data[ATTR_NEXT_STAGE] = nxt.get(ATTR_STAGE).value
+        try:
+            data[ATTR_NEXT_STAGE] = nxt.get(ATTR_STAGE).values
+        except AttributeError:
+            data[ATTR_NEXT_STAGE] = Stage.NO_LOAD_SHEDDING.value
+
         data[ATTR_NEXT_START_TIME] = nxt.get(ATTR_START_TIME).isoformat()
         if ATTR_END_TIME in nxt:
             data[ATTR_NEXT_END_TIME] = nxt.get(ATTR_END_TIME).isoformat()
@@ -434,8 +442,8 @@ def get_sensor_attrs(forecast: list, stage: Stage = Stage.NO_LOAD_SHEDDING) -> d
 
 
 def clean(data: dict) -> dict:
-    """Remove default values from dict"""
-    for (key, value) in CLEAN_DATA.items():
+    """Remove default values from dict."""
+    for key, value in CLEAN_DATA.items():
         if key not in data:
             continue
         if data[key] == value:
